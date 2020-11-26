@@ -1,0 +1,13 @@
+.flat-cmdi-templates {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+/* this will create space between de flex items */
+.flat-cmdi-templates > div, .flat-cmdi-templates > button {
+  margin: 10px 0;
+}
+
+.flat-cmdi-templates-field {
+}

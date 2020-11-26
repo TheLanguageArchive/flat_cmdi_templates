@@ -1,0 +1,174 @@
+<?php
+require_once __DIR__ . '/vendor/autoload.php';
+
+use TLA\FLAT\CmdiTemplates\FormBuilder;
+
+module_load_include('inc', 'flat_cmdi_templates', 'inc/db');
+module_load_include('inc', 'flat_cmdi_templates', 'inc/exceptions');
+module_load_include('inc', 'flat_cmdi_templates', 'inc/form');
+
+function ibo($var, $exit = true) {
+  echo '<pre>', var_dump($var) , '</pre>';
+  if ($exit) {
+    exit;
+  }
+}
+
+function flat_cmdi_templates_form_flat_bundle_update_cmdi_form_alter(&$form, &$form_state) {
+
+  if (isset($form_state['clicked_button']) && isset($form_state['clicked_button']['#button_action']) && $form_state['clicked_button']['#button_action'] === 'load_template') {
+
+    module_load_include('inc', 'flat_deposit', 'Helpers/CMDI/FormBuilder/class.FormBuilder');
+
+    $containerName = $form_state['clicked_button']['#containername'];
+    $id = (int)$form_state['input']['template_container']['elements'][$containerName]['cmdi_template']['template'];
+    $template = flat_cmdi_templates_db_fetch($id);
+    $data = CmdiHandler::simplexml_load_cmdi_string('<Description>' . $template['template'] . '</Description>');
+    // $data = null;
+
+    unset($form_state['input']['template_container']['elements'][$containerName]);
+    $formBuilder = new FormBuilder($template['filename']);
+    $form['template_container']['elements'][$containerName] = $formBuilder->getComponent($template['node'], $data);
+  }
+
+  $module_path = drupal_get_path('module', 'flat_cmdi_templates');
+  drupal_add_css($module_path . '/css/flat-cmdi-templates.css');
+
+  flat_cmdi_templates_form($form, $form_state);
+}
+
+function flat_cmdi_templates_form(&$form, &$form_state) {
+
+  $templateName = $form['trigger']['select_profile_name']['#value'];
+  $templates = flat_cmdi_templates_form_get_available_templates($templateName);
+
+  foreach ($form['template_container']['elements'] as $containerName => $rootField) {
+
+    if (isset($rootField['#type']) && $rootField['#type'] === 'fieldset') {
+
+      // prepending block to top of fieldset
+      $form['template_container']['elements'][$containerName] = flat_cmdi_templates_form_cmdi_template($templates, $containerName, $rootField['#nodename']) + $form['template_container']['elements'][$containerName];
+    }
+  }
+}
+
+function flat_cmdi_templates_form_get_available_templates($templateName) {
+
+  $templates = [];
+  $rows      = flat_cmdi_templates_db_fetch_all($templateName);
+
+  foreach ($rows as $row) {
+    $templates[$row['container']][$row['id']] = $row['label'];
+  }
+
+  return $templates;
+}
+
+function flat_cmdi_templates_form_cmdi_template($templates, $containerName, $nodeName) {
+
+  $options = ['- select template -'];
+  if (isset($templates[$containerName]) && is_array($templates[$containerName]) && count($templates[$containerName]) > 0) {
+    $options = $options + $templates[$containerName];
+  }
+
+  return [
+
+    'cmdi_template' => [
+
+      '#type' => 'container',
+      '#attributes' => [
+        'class' => ['flat-cmdi-templates'],
+      ],
+      'template' => [
+        '#type' => 'select',
+        '#options' => $options,
+        '#attributes' => [
+          'class' => ['flat-cmdi-templates-field'],
+        ],
+      ],
+      'load' => [
+        '#type' => 'button',
+        '#name' => 'load_' . $nodeName,
+        '#value' => 'Load template',
+        '#flat_ignore_button' => true,
+        '#button_action' => 'load_template',
+        '#containername' => $containerName,
+        '#nodename' => $nodeName,
+        '#ajax' => [
+          'callback' => 'flat_cmdi_templates_load',
+          'wrapper' => 'template-form',
+          'method' => 'replace',
+          'event' => 'click',
+          'prevent' => 'submit click mousedown',
+        ],
+        '#limit_validation_errors' => [],
+      ],
+      'new_template' => [
+        '#type' => 'textfield',
+        '#attributes' => [
+          'class' => ['flat-cmdi-templates-field'],
+          'placeholder' => 'Name of new template',
+        ],
+      ],
+      'save' => [
+        '#type' => 'button',
+        '#name' => 'save_' . $nodeName,
+        '#value' => 'Save as template',
+        '#flat_ignore_button' => true,
+        '#containername' => $containerName,
+        '#nodename' => $nodeName,
+        '#ajax' => [
+          'callback' => 'flat_cmdi_templates_save',
+          'wrapper' => 'template-form',
+          'method' => 'replace',
+          'event' => 'click',
+          'prevent' => 'submit click mousedown',
+        ],
+        '#limit_validation_errors' => [],
+      ],
+    ]
+  ];
+}
+
+function flat_cmdi_templates_load($form, $form_state) {
+  return $form['template_container'];
+}
+
+function flat_cmdi_templates_save($form, $form_state) {
+
+  $elements_form_data = $form_state['values']['template_container']['elements'];
+  $containerName = $form_state['clicked_button']['#containername'];
+  $nodeName = $form_state['clicked_button']['#nodename'];
+
+  if (empty($elements_form_data[$containerName]['cmdi_template']['new_template'])) {
+
+    // template label hasn't been filled in
+    form_set_error('new_template', 'You haven\'t provided label for new cmdi template block');
+    return $form['template_container'];
+  }
+
+  module_load_include('inc', 'flat_deposit', 'Helpers/CMDI/CmdiCreator/class.CmdiCreator');
+
+  $templateName = $form_state['values']['select_profile_name'];
+  $owner = $form_state['values']['owner'];
+  $label = $elements_form_data[$containerName]['cmdi_template']['new_template'];
+  $creator = new CmdiCreator();
+
+  try {
+
+    $creator->setCmdi($templateName, $elements_form_data, $owner);
+
+    $generatedCmdi = $creator->getCmdi();
+    $block         = $generatedCmdi->Components->{$templateName}->{$nodeName};
+
+    flat_cmdi_templates_db_save($templateName, $label, $containerName, $nodeName, $block->asXML());
+    flat_cmdi_templates_form($form, $form_state);
+
+    return $form['template_container'];
+
+  } catch (CmdiCreatorException $e) {
+
+    form_set_error('error', $e->getMessage());
+    return $form['template_container'];
+  }
+}

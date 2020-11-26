@@ -1,0 +1,7 @@
+name = "Flat CMDI Templates"
+description = "A FLAT module to allow saving blocks of CMDI for reuse"
+package = FLAT
+core = 7.x
+version = 7.x-0.1-dev
+configure = admin/config/flat_deposit/flat_cmdi_templates
+dependencies[] = flat_deposit

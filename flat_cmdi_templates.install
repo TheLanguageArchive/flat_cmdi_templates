@@ -1,0 +1,65 @@
+<?php
+
+function flat_cmdi_templates_schema() {
+
+  $schema = [
+
+    'flat_cmdi_templates' => [
+
+      'description' => 'Table that stores blocks inside cmdi as templates for Flat CMDI Templates module',
+      'fields'      => [
+
+        'id' => [
+
+          'type'        => 'serial',
+          'not null'    => true,
+          'unsigned'    => true,
+          'description' => 'The primary id',
+        ],
+
+        'filename' => [
+
+          'type'        => 'varchar',
+          'length'      => 500,
+          'not null'    => true,
+          'description' => 'Filename of cmdi template',
+        ],
+
+        'label' => [
+
+          'type'        => 'varchar',
+          'length'      => 500,
+          'not null'    => true,
+          'description' => 'Label for cmdi template block',
+        ],
+
+        'container' => [
+
+          'type'        => 'varchar',
+          'length'      => 500,
+          'not null'    => true,
+          'description' => 'Container name in form of cmdi metadata',
+        ],
+
+        'node' => [
+
+          'type'        => 'varchar',
+          'length'      => 500,
+          'not null'    => true,
+          'description' => 'Node name of cmdi template block',
+        ],
+
+        'template' => [
+
+          'type'        => 'blob',
+          'size'        => 'normal',
+          'not null'    => true,
+          'description' => 'Actual cmdi template block',
+        ],
+      ],
+      'primary key' => ['id'],
+    ],
+  ];
+
+  return $schema;
+}
