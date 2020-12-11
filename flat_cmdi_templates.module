@@ -1,5 +1,4 @@
 <?php
-require_once __DIR__ . '/vendor/autoload.php';
 
 use TLA\FLAT\CmdiTemplates\FormBuilder;
 
@@ -14,48 +13,10 @@ function ibo($var, $exit = true) {
   }
 }
 
-function flat_cmdi_templates_form_flat_bundle_update_cmdi_form_alter(&$form, &$form_state) {
-
-  if (isset($form_state['clicked_button']) && isset($form_state['clicked_button']['#button_action']) && $form_state['clicked_button']['#button_action'] === 'load_template') {
-
-    module_load_include('inc', 'flat_deposit', 'Helpers/CMDI/FormBuilder/class.FormBuilder');
-
-    $containerName = $form_state['clicked_button']['#containername'];
-    $id = (int)$form_state['input']['template_container']['elements'][$containerName]['cmdi_template']['template'];
-    $template = flat_cmdi_templates_db_fetch($id);
-    $data = CmdiHandler::simplexml_load_cmdi_string('<Description>' . $template['template'] . '</Description>');
-    // $data = null;
-
-    unset($form_state['input']['template_container']['elements'][$containerName]);
-    $formBuilder = new FormBuilder($template['filename']);
-    $form['template_container']['elements'][$containerName] = $formBuilder->getComponent($template['node'], $data);
-  }
-
-  $module_path = drupal_get_path('module', 'flat_cmdi_templates');
-  drupal_add_css($module_path . '/css/flat-cmdi-templates.css');
-
-  flat_cmdi_templates_form($form, $form_state);
-}
-
-function flat_cmdi_templates_form(&$form, &$form_state) {
-
-  $templateName = $form['trigger']['select_profile_name']['#value'];
-  $templates = flat_cmdi_templates_form_get_available_templates($templateName);
-
-  foreach ($form['template_container']['elements'] as $containerName => $rootField) {
-
-    if (isset($rootField['#type']) && $rootField['#type'] === 'fieldset') {
-
-      // prepending block to top of fieldset
-      $form['template_container']['elements'][$containerName] = flat_cmdi_templates_form_cmdi_template($templates, $containerName, $rootField['#nodename']) + $form['template_container']['elements'][$containerName];
-    }
-  }
-}
-
-function flat_cmdi_templates_form_get_available_templates($templateName) {
+function flat_cmdi_templates_form_get_available_templates($profile) {
 
   $templates = [];
-  $rows      = flat_cmdi_templates_db_fetch_all($templateName);
+  $rows      = flat_cmdi_templates_db_fetch_all($profile);
 
   foreach ($rows as $row) {
     $templates[$row['container']][$row['id']] = $row['label'];
@@ -64,111 +25,280 @@ function flat_cmdi_templates_form_get_available_templates($templateName) {
   return $templates;
 }
 
-function flat_cmdi_templates_form_cmdi_template($templates, $containerName, $nodeName) {
+function flat_cmdi_templates_form_flat_deposit_cmdi_form_alter(&$form, &$form_state) {
 
-  $options = ['- select template -'];
-  if (isset($templates[$containerName]) && is_array($templates[$containerName]) && count($templates[$containerName]) > 0) {
-    $options = $options + $templates[$containerName];
+  // ibo($form_state['selected'], false);
+  // ibo($form_state['triggering_element'], false);
+  // ibo($form_state['input'], false);
+  // ibo($form_state['parent_nid']);
+  // ibo($form_state['triggering_element']['#name']);
+
+  if (!isset($form_state['selected'])) {
+
+    // no profile was selected
+    return;
   }
 
-  return [
+  if (!isset($form['template_container']['elements'])) {
 
-    'cmdi_template' => [
-
-      '#type' => 'container',
-      '#attributes' => [
-        'class' => ['flat-cmdi-templates'],
-      ],
-      'template' => [
-        '#type' => 'select',
-        '#options' => $options,
-        '#attributes' => [
-          'class' => ['flat-cmdi-templates-field'],
-        ],
-      ],
-      'load' => [
-        '#type' => 'button',
-        '#name' => 'load_' . $nodeName,
-        '#value' => 'Load template',
-        '#flat_ignore_button' => true,
-        '#button_action' => 'load_template',
-        '#containername' => $containerName,
-        '#nodename' => $nodeName,
-        '#ajax' => [
-          'callback' => 'flat_cmdi_templates_load',
-          'wrapper' => 'template-form',
-          'method' => 'replace',
-          'event' => 'click',
-          'prevent' => 'submit click mousedown',
-        ],
-        '#limit_validation_errors' => [],
-      ],
-      'new_template' => [
-        '#type' => 'textfield',
-        '#attributes' => [
-          'class' => ['flat-cmdi-templates-field'],
-          'placeholder' => 'Name of new template',
-        ],
-      ],
-      'save' => [
-        '#type' => 'button',
-        '#name' => 'save_' . $nodeName,
-        '#value' => 'Save as template',
-        '#flat_ignore_button' => true,
-        '#containername' => $containerName,
-        '#nodename' => $nodeName,
-        '#ajax' => [
-          'callback' => 'flat_cmdi_templates_save',
-          'wrapper' => 'template-form',
-          'method' => 'replace',
-          'event' => 'click',
-          'prevent' => 'submit click mousedown',
-        ],
-        '#limit_validation_errors' => [],
-      ],
-    ]
-  ];
-}
-
-function flat_cmdi_templates_load($form, $form_state) {
-  return $form['template_container'];
-}
-
-function flat_cmdi_templates_save($form, $form_state) {
-
-  $elements_form_data = $form_state['values']['template_container']['elements'];
-  $containerName = $form_state['clicked_button']['#containername'];
-  $nodeName = $form_state['clicked_button']['#nodename'];
-
-  if (empty($elements_form_data[$containerName]['cmdi_template']['new_template'])) {
-
-    // template label hasn't been filled in
-    form_set_error('new_template', 'You haven\'t provided label for new cmdi template block');
-    return $form['template_container'];
+    // no elements available for templating
+    return;
   }
+
+  $profile = $form_state['selected'];
+  $owner = $form_state['input']['owner'];
+
+  if (isset($form_state['triggering_element']['#ajax']['callback']) && $form_state['triggering_element']['#ajax']['callback'] === 'flat_cmdi_templates_ajax_save_callback') {
+
+    // saving block to database
+    $element = $form_state['triggering_element'];
+    $container_name = $element['#container_name'];
+    $node_name = $element['#node_name'];
+    $data = $form_state['input']['template_container']['elements'];
+
+    // manually adding clarinprofileid because it is not sent when clicking button
+    // that does not trigger validation
+    // (@see Drupal 7 Form API #limit_validation_errors)
+    $data['data'] = $form['template_container']['elements']['data']['#value'];
+
+    flat_cmdi_templates_form_save($profile, $owner, $data[$container_name]['flat_cmdi_templates']['new_template']['label'], $data, $container_name, $node_name);
+
+    // clearing form data
+    unset($form_state['input']['template_container']['elements'][$container_name]['flat_cmdi_templates']);
+  }
+
+  if (isset($form_state['triggering_element']['#ajax']['callback']) && $form_state['triggering_element']['#ajax']['callback'] === 'flat_cmdi_templates_ajax_load_callback') {
+
+    module_load_include('inc', 'flat_deposit', 'Helpers/CMDI/FormBuilder/class.FormBuilder');
+    module_load_include('inc', 'flat_deposit', 'Helpers/CMDI/class.CmdiHandler');
+
+    // loading block from database
+    $element = $form_state['triggering_element'];
+    $container_name = $element['#container_name'];
+    $node_name = $element['#node_name'];
+
+    $id = (int)$form_state['input']['template_container']['elements'][$container_name]['flat_cmdi_templates']['load_template'];
+
+    $template = flat_cmdi_templates_db_fetch($id);
+    $data = CmdiHandler::simplexml_load_cmdi_string('<' . $node_name . '>' . $template['template'] . '</' . $node_name . '>');
+
+    unset($form_state['input']['template_container']['elements'][$container_name]);
+
+    $formBuilder = new FormBuilder($template['filename']);
+    $form['template_container']['elements'][$container_name] = $formBuilder->getComponent($template['node'], $data);
+  }
+
+  $all_available_templates = flat_cmdi_templates_form_get_available_templates($profile);
+
+  foreach ($form['template_container']['elements'] as $container_name => $element) {
+
+    // @TODO make this dependent on profile cmdi template file instead of fieldset
+    // @see FormComposite.inc too
+    if (!isset($element['#type']) || $element['#type'] !== 'fieldset') {
+      continue;
+    }
+
+    $available_templates = $all_available_templates[$container_name] ?? false;
+
+    $form['template_container']['elements'][$container_name]['#prefix'] = '<div id="template-container-elements-' . $container_name . '-wrapper">';
+    $form['template_container']['elements'][$container_name]['#suffix'] = '</div>';
+    $form['template_container']['elements'][$container_name]['flat_cmdi_templates'] = flat_cmdi_templates_fields($available_templates, $container_name, $element['#node_name']);
+  }
+}
+
+function flat_cmdi_templates_form_flat_bundle_update_cmdi_form_alter(&$form, &$form_state) {
+
+  // ibo($form_state['selected'], false);
+  // ibo($form_state['triggering_element'], false);
+  // ibo($form_state['input'], false);
+  // ibo($form_state['parent_nid']);
+  // ibo($form_state['triggering_element']['#name']);
+
+  if (!isset($form['trigger']['select_profile_name']['#value'])) {
+
+    // no profile was selected
+    return;
+  }
+
+  if (!isset($form['template_container']['elements'])) {
+
+    // no elements available for templating
+    return;
+  }
+
+  global $user;
+
+  $profile = $form['trigger']['select_profile_name']['#value'];
+  $owner = $user->name;
+
+  if (isset($form_state['triggering_element']['#ajax']['callback']) && $form_state['triggering_element']['#ajax']['callback'] === 'flat_cmdi_templates_ajax_save_callback') {
+
+    // saving block to database
+    $element = $form_state['triggering_element'];
+    $container_name = $element['#container_name'];
+    $node_name = $element['#node_name'];
+    $data = $form_state['input']['template_container']['elements'];
+
+    // manually adding clarinprofileid because it is not sent when clicking button
+    // that does not trigger validation
+    // (@see Drupal 7 Form API #limit_validation_errors)
+    $data['data'] = $form['template_container']['elements']['data']['#value'];
+
+    flat_cmdi_templates_form_save($profile, $owner, $data[$container_name]['flat_cmdi_templates']['new_template']['label'], $data, $container_name, $node_name);
+
+    // clearing form data
+    unset($form_state['input']['template_container']['elements'][$container_name]['flat_cmdi_templates']);
+  }
+
+  if (isset($form_state['triggering_element']['#ajax']['callback']) && $form_state['triggering_element']['#ajax']['callback'] === 'flat_cmdi_templates_ajax_load_callback') {
+
+    module_load_include('inc', 'flat_deposit', 'Helpers/CMDI/FormBuilder/class.FormBuilder');
+    module_load_include('inc', 'flat_deposit', 'Helpers/CMDI/class.CmdiHandler');
+
+    // loading block from database
+    $element = $form_state['triggering_element'];
+    $container_name = $element['#container_name'];
+    $node_name = $element['#node_name'];
+
+    $id = (int)$form_state['input']['template_container']['elements'][$container_name]['flat_cmdi_templates']['load_template'];
+
+    $template = flat_cmdi_templates_db_fetch($id);
+    $data = CmdiHandler::simplexml_load_cmdi_string('<' . $node_name . '>' . $template['template'] . '</' . $node_name . '>');
+
+    unset($form_state['input']['template_container']['elements'][$container_name]);
+
+    $formBuilder = new FormBuilder($template['filename']);
+    $form['template_container']['elements'][$container_name] = $formBuilder->getComponent($template['node'], $data);
+  }
+
+  $all_available_templates = flat_cmdi_templates_form_get_available_templates($profile);
+
+  foreach ($form['template_container']['elements'] as $container_name => $element) {
+
+    // @TODO make this dependent on profile cmdi template file instead of fieldset
+    // @see FormComposite.inc too
+    if (!isset($element['#type']) || $element['#type'] !== 'fieldset') {
+      continue;
+    }
+
+    $available_templates = $all_available_templates[$container_name] ?? false;
+
+    $form['template_container']['elements'][$container_name]['#prefix'] = '<div id="template-container-elements-' . $container_name . '-wrapper">';
+    $form['template_container']['elements'][$container_name]['#suffix'] = '</div>';
+    $form['template_container']['elements'][$container_name]['flat_cmdi_templates'] = flat_cmdi_templates_fields($available_templates, $container_name, $element['#node_name']);
+  }
+}
+
+function flat_cmdi_templates_form_save($profile, $owner, $label, $data, $container_name, $node_name) {
 
   module_load_include('inc', 'flat_deposit', 'Helpers/CMDI/CmdiCreator/class.CmdiCreator');
 
-  $templateName = $form_state['values']['select_profile_name'];
-  $owner = $form_state['values']['owner'];
-  $label = $elements_form_data[$containerName]['cmdi_template']['new_template'];
+  // rerunning autoloader, do not know why drupal does not do this when calling ajax
+  // @TODO: find out why so this is not necessary
+  autoload_cmdicreator();
+
   $creator = new CmdiCreator();
 
   try {
 
-    $creator->setCmdi($templateName, $elements_form_data, $owner);
+    $creator->setCmdi($profile, $data, $owner);
 
     $generatedCmdi = $creator->getCmdi();
-    $block         = $generatedCmdi->Components->{$templateName}->{$nodeName};
+    $block         = $generatedCmdi->Components->{$profile}->{$node_name};
 
-    flat_cmdi_templates_db_save($templateName, $label, $containerName, $nodeName, $block->asXML());
-    flat_cmdi_templates_form($form, $form_state);
-
-    return $form['template_container'];
+    flat_cmdi_templates_db_save($profile, $label, $container_name, $node_name, $block->asXML());
 
   } catch (CmdiCreatorException $e) {
-
     form_set_error('error', $e->getMessage());
-    return $form['template_container'];
+  }
+}
+
+function flat_cmdi_templates_fields($available_templates, $container_name, $node_name) {
+
+   $fields = [
+
+    '#type' => 'container',
+    '#weight' => -100,
+    '#prefix' => '<div id="flat-cmdi-templates-' . $container_name . '">',
+    '#suffix' => '</div>',
+  ];
+
+  if (false === $available_templates) {
+
+    // no templates for this container
+    $fields['load_template'] = flat_cmdi_templates_no_templates();
+
+  } else {
+
+    $fields['load_template'] = [
+
+      '#type' => 'select',
+      '#options' => ['- select template -'] + $available_templates,
+      '#attributes' => [
+        'class' => ['flat-cmdi-templates-field'],
+      ],
+      '#container_name' => $container_name,
+      '#node_name' => $node_name,
+      '#ajax' => [
+        'callback' => 'flat_cmdi_templates_ajax_load_callback',
+        'method' => 'replace',
+        'effect' => 'fade',
+        'wrapper' => 'template-container-elements-' . $container_name . '-wrapper',
+      ],
+    ];
+  }
+
+  $fields['new_template'] = [
+
+    'label' => [
+
+      '#type' => 'textfield',
+      '#default_value' => '',
+      '#attributes' => [
+        'class' => ['flat-cmdi-templates-field'],
+        'placeholder' => 'Label of new template',
+      ],
+    ],
+
+    'save' => [
+
+      '#type' => 'button',
+      '#name' => 'save_cmdi_template_' . $container_name,
+      '#value' => 'Save as template',
+      '#flat_ignore_button' => true,
+      '#container_name' => $container_name,
+      '#node_name' => $node_name,
+      '#limit_validation_errors' => [],
+      '#ajax' => [
+
+        'callback' => 'flat_cmdi_templates_ajax_save_callback',
+        'method' => 'replace',
+        'effect' => 'fade',
+        'wrapper' => 'flat-cmdi-templates-' . $container_name,
+      ],
+    ],
+  ];
+
+  return $fields;
+}
+
+function flat_cmdi_templates_no_templates() {
+
+  return [
+    '#markup' => '<strong>No templates available for this block</strong><br /><br />',
+  ];
+}
+
+function flat_cmdi_templates_ajax_load_callback($form, &$form_state) {
+
+  if (isset($form_state['triggering_element']['#ajax']['callback']) && $form_state['triggering_element']['#ajax']['callback'] === 'flat_cmdi_templates_ajax_load_callback') {
+    return $form['template_container']['elements'][$form_state['triggering_element']['#container_name']];
+  }
+}
+
+function flat_cmdi_templates_ajax_save_callback($form, &$form_state) {
+
+  if (isset($form_state['triggering_element']['#ajax']['callback']) && $form_state['triggering_element']['#ajax']['callback'] === 'flat_cmdi_templates_ajax_save_callback') {
+    return $form['template_container']['elements'][$form_state['triggering_element']['#container_name']]['flat_cmdi_templates'];
   }
 }
